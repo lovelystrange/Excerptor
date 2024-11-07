@@ -2,12 +2,18 @@ import os
 import glob
 import cv2
 import numpy as np
+import re
 import onnxruntime
 from ultralytics import YOLO
 from rapidocr_onnxruntime import RapidOCR
 from argparse import ArgumentParser
 from rebook.spliter import book_spliter
 from rebook.dewarp import go_dewarp
+
+def get_number_from_filename(filename):
+    # 提取文件名中的数字
+    numbers = re.findall(r'\d+', filename)
+    return int(numbers[-1]) if numbers else 0
 
 def ill_correct(image):
     im = image.astype(np.float32) / 255.0
@@ -79,8 +85,7 @@ if __name__ == '__main__':
         '-d',
         '--debug',
         action='store_true',
-        help=\
-            'Debug, keep processing files, print infomations',
+        help='Debug, keep processing files, print infomations',
     )
     parser.add_argument(
         '-ms',
@@ -93,63 +98,48 @@ if __name__ == '__main__':
         '-ha',
         '--hand_mark',
         action='store_true',
-        help=\
-            'Recognize hands or not.',
+        help='Recognize hands or not.',
     )
     parser.add_argument(
         '-l',
         '--line_mark',
         action='store_true',
-        help=\
-            'Recognize underlines or not.',
+        help='Recognize underlines or not.',
     )
     parser.add_argument(
         '-wb',
         '--white_balance',
         action='store_true',
-        help=\
-            'Perform white balance correction on the cropped image. '+
-            'or '+
-            'Perform bleaching on the cropped image.',
+        help='Perform white balance correction or bleaching on the cropped image.',
     )
     parser.add_argument(
         '-i',
         '--input_folder',
         type=str,
-        default='book',
-        help='Put original image in this folder.',
+        default='',
+        help='Input folder containing original images. Can be provided via command line or drag-and-drop.',
     )
-    parser.add_argument(
-        '-o',
-        '--output_folder',
-        type=str,
-        default='dewarped_img',
-        help='Dewarped image will be put in this folder.',
-    )
-    parser.add_argument(
-        '-a',
-        '--archive_folder',
-        type=str,
-        default='original_img',
-        help='Archive original image in this folder.',
-    )
-    parser.add_argument(
-        '-n',
-        '--note_name',
-        type=str,
-        default='note.md',
-        help='Model file path for YOLO segment.',
-    )
+
     args = parser.parse_args()
-    debug: bool = args.debug
-    model_seg: str = args.model_seg
-    hand_mark: bool = args.hand_mark
-    line_mark: bool = args.line_mark
-    white_balance: bool = args.white_balance
-    input_folder: str = args.input_folder
-    output_folder: str = args.output_folder
-    archive_folder: str = args.archive_folder
-    note_name: str = args.note_name
+    
+    # 如果没有提供输入路径,请求用户输入
+    if not args.input_folder:
+        args.input_folder = input("Please drag and drop the image folder here or paste its path: ").strip('" ')
+    
+    # 设置输出路径相对于输入目录
+    args.output_folder = os.path.join(args.input_folder, 'dewarped_img')
+    args.archive_folder = os.path.join(args.input_folder, 'original_img')
+    args.note_name = os.path.join(args.input_folder, 'note.md')
+    
+    debug = args.debug
+    model_seg = args.model_seg
+    hand_mark = args.hand_mark
+    line_mark = args.line_mark
+    white_balance = args.white_balance
+    input_folder = args.input_folder
+    output_folder = args.output_folder
+    archive_folder = args.archive_folder
+    note_name = args.note_name
     
     if hand_mark:
         from rtmlib import Hand, PoseTracker, draw_skeleton
@@ -159,9 +149,14 @@ if __name__ == '__main__':
     os.makedirs(archive_folder, exist_ok=True)
     os.makedirs(output_folder, exist_ok=True)
 
-    image_paths = glob.glob(os.path.join(input_folder, '*.jpg'))
-    image_paths += glob.glob(os.path.join(input_folder, '*.jpeg'))
-    image_paths += glob.glob(os.path.join(input_folder, '*.png'))
+    # 获取所有支持的图片文件
+    image_paths = []
+    for ext in ['*.jpg', '*.JPG', '*.jpeg', '*.JPEG', '*.png', '*.PNG']:
+        image_paths.extend(glob.glob(os.path.join(input_folder, ext)))
+    
+    # 按文件名中的数字排序
+    image_paths.sort(key=lambda x: get_number_from_filename(os.path.basename(x)))
+
     if image_paths:
         with open(note_name, 'a', encoding='utf-8') as note_file:
             for image_path in image_paths:
@@ -238,9 +233,10 @@ if __name__ == '__main__':
                                 num_percent = digit_count / len(text)
                     page_number = ''.join(t for t in best_text if t.isdigit())
                     note_file.write(f'> Page {page_number}\n')
+                    
                     #text and cropped image
                     for line in text_lines:
                         note_file.write(f'> - {line}\n')
                     if cropped_img is not None:
-                        note_file.write(f'![{cropped_pic_filename}]({output_folder}/{cropped_pic_filename})\n\n')
-                    note_file.write(f'![{dewarped_filename}]({output_folder}/{dewarped_filename})\n\n')
+                        note_file.write(f'![{cropped_pic_filename}]({os.path.relpath(output_folder, os.path.dirname(note_name))}/{cropped_pic_filename})\n\n')
+                    note_file.write(f'![{dewarped_filename}]({os.path.relpath(output_folder, os.path.dirname(note_name))}/{dewarped_filename})\n\n')
